@@ -1175,7 +1175,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     if (previousMode === "capture-stdout" && mode === "passthrough" && this._splitHeight > 0) {
-      this.flushStdoutCache(this._splitHeight)
+      this.flushPendingSplitOutputBeforeTransition(true)
     }
 
     this._externalOutputMode = mode
@@ -1243,6 +1243,25 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this._screenMode === "split-footer" ? Math.max(this._terminalHeight - this._splitHeight, 0) : 0
   }
 
+  private flushPendingSplitOutputBeforeTransition(forceFooterRepaint: boolean = false): void {
+    if (
+      this._screenMode !== "split-footer" ||
+      this._splitHeight <= 0 ||
+      this._externalOutputMode !== "capture-stdout"
+    ) {
+      return
+    }
+
+    if (this.externalOutputQueue.size === 0 && !forceFooterRepaint) {
+      return
+    }
+
+    const output = this.externalOutputQueue.claim()
+    const outputBytes = this.externalOutputEncoder.encode(output)
+    const force = forceFooterRepaint || outputBytes.length > 0
+    this.renderOffset = this.lib.renderSplitFooter(this.rendererPtr, outputBytes, this.getSplitPinnedRenderOffset(), force)
+  }
+
   private resetSplitScrollback(seedRows: number = 0): void {
     this.renderOffset = this.lib.resetSplitScrollback(this.rendererPtr, seedRows, this.getSplitPinnedRenderOffset())
   }
@@ -1290,8 +1309,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const terminalScreenModeChanged = this._terminalIsSetup && prevUseAlternateScreen !== nextUseAlternateScreen
     const leavingSplitFooter = prevSplitHeight > 0 && nextSplitHeight === 0
 
+    if (this._terminalIsSetup && prevSplitHeight > 0) {
+      this.flushPendingSplitOutputBeforeTransition()
+    }
+
     if (this._terminalIsSetup && leavingSplitFooter) {
-      this.flushStdoutCache(this._terminalHeight, true)
+      this.renderOffset = 0
+      this.lib.setRenderOffset(this.rendererPtr, 0)
     }
 
     if (this._terminalIsSetup && !terminalScreenModeChanged) {
@@ -1956,6 +1980,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private processResize(width: number, height: number): void {
     if (width === this._terminalWidth && height === this._terminalHeight) return
 
+    if (this._terminalIsSetup && this._controlState !== RendererControlState.EXPLICIT_SUSPENDED) {
+      this.flushPendingSplitOutputBeforeTransition()
+    }
+
     const previousGeometry = calculateRenderGeometry(
       this._screenMode,
       this._terminalWidth,
@@ -1980,7 +2008,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const splitFooterActive = this._screenMode === "split-footer"
 
     if (splitFooterActive) {
-      // TODO: Handle resizing split mode properly
       if (width < prevWidth && previousGeometry.effectiveFooterHeight > 0) {
         const start = this._terminalHeight - previousGeometry.effectiveFooterHeight * 2
         const flush = ANSI.moveCursorAndClear(start, 1)
@@ -2188,6 +2215,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._controlState = RendererControlState.EXPLICIT_SUSPENDED
     this.internalPause()
 
+    if (this._terminalIsSetup) {
+      this.flushPendingSplitOutputBeforeTransition(true)
+    }
+
     this._suspendedMouseEnabled = this._useMouse
 
     this.disableMouse()
@@ -2200,6 +2231,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     })
     this.stdinParser?.reset()
     this.stdin.removeListener("data", this.stdinListener)
+
     this.lib.suspendRenderer(this.rendererPtr)
 
     if (this.stdin.setRawMode) {
@@ -2224,6 +2256,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.addExitListeners()
 
     this.lib.resumeRenderer(this.rendererPtr)
+    if (this._screenMode === "split-footer" && this._splitHeight > 0) {
+      this.syncSplitFooterState()
+    }
 
     if (this._suspendedMouseEnabled) {
       this.enableMouse()
@@ -2384,11 +2419,19 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdinParser = null
     this.oscSubscribers.clear()
     this._console.destroy()
-    this.externalOutputMode = "passthrough"
 
-    if (this._splitHeight > 0) {
-      this.flushStdoutCache(this._splitHeight, true)
+    if (
+      this._splitHeight > 0 &&
+      this._terminalIsSetup &&
+      this._controlState !== RendererControlState.EXPLICIT_SUSPENDED
+    ) {
+      this.flushPendingSplitOutputBeforeTransition(true)
+      this.renderOffset = 0
+      this.lib.setRenderOffset(this.rendererPtr, 0)
     }
+
+    this._externalOutputMode = "passthrough"
+    this.stdout.write = this.realStdoutWrite
 
     this.lib.destroyRenderer(this.rendererPtr)
     rendererTracker.removeRenderer(this)
