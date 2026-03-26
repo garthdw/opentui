@@ -182,7 +182,7 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32", "bool"],
       returns: "u32",
     },
-    renderSplitFooterSnapshot: {
+    commitSplitFooterSnapshot: {
       args: ["ptr", "ptr", "u32", "bool", "bool", "u32", "bool"],
       returns: "u32",
     },
@@ -1407,7 +1407,7 @@ export interface RenderLib {
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
   repaintSplitFooter: (renderer: Pointer, pinnedRenderOffset: number, force: boolean) => number
-  renderSplitFooterSnapshot: (
+  commitSplitFooterSnapshot: (
     renderer: Pointer,
     snapshot: OptimizedBuffer,
     rowColumns: number,
@@ -2451,7 +2451,7 @@ class FFIRenderLib implements RenderLib {
     return this.opentui.symbols.repaintSplitFooter(renderer, pinnedRenderOffset, force)
   }
 
-  public renderSplitFooterSnapshot(
+  public commitSplitFooterSnapshot(
     renderer: Pointer,
     snapshot: OptimizedBuffer,
     rowColumns: number,
@@ -2460,7 +2460,7 @@ class FFIRenderLib implements RenderLib {
     pinnedRenderOffset: number,
     force: boolean,
   ): number {
-    return this.opentui.symbols.renderSplitFooterSnapshot(
+    return this.opentui.symbols.commitSplitFooterSnapshot(
       renderer,
       snapshot.ptr,
       rowColumns,
