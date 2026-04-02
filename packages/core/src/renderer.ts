@@ -1473,8 +1473,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private flushPendingSplitCommits(forceFooterRepaint: boolean = false): void {
     const commits = this.externalOutputQueue.claim()
     let hasCommittedOutput = false
+    const lastCommitIndex = commits.length - 1
 
-    for (const commit of commits) {
+    for (const [index, commit] of commits.entries()) {
+      const forceCommit = forceFooterRepaint && index === lastCommitIndex
+
       try {
         this.renderOffset = this.lib.commitSplitFooterSnapshot(
           this.rendererPtr,
@@ -1483,7 +1486,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           commit.startOnNewLine,
           commit.trailingNewline,
           this.getSplitPinnedRenderOffset(),
-          true,
+          forceCommit,
         )
         hasCommittedOutput = true
       } finally {
